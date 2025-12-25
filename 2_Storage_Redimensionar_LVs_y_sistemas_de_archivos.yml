@@ -1,20 +1,24 @@
 ---
 # /home/jensy/GitHub/Ansible/2_Storage_Redimensionar_LVs_y_sistemas_de_archivos.yml
-# 🚀 CONFIGURACIÓN COMPLETA EN UN SOLO ARCHIVO - RHCSA STORAGE LAB
-# Guardar como: setup-lab.yml
-# Ejecutar: ansible-playbook setup-lab.yml -i "192.168.122.206," -u student -k -K
+---
+# Playbook para ejercicio RHCSA - Redimensionar LVs y sistemas de archivos
+# Versión corregida - Funcional
 
-- name: Configurar laboratorio para ejercicio de LVM/XFS
+- name: Configurar laboratorio para práctica de LVM/XFS
   hosts: all
   gather_facts: yes
   become: yes
+  become_user: root
+  
   vars:
     vg_name: practice_vg
     lv_name: data_lv
     mount_point: /mnt/data
+    initial_size: "500M"
+    target_size: "1.2G"
   
   tasks:
-    # 1. Instalar dependencias si faltan
+    # 1. Instalar paquetes necesarios (modo silencioso)
     - name: Instalar paquetes necesarios
       dnf:
         name:
@@ -22,64 +26,105 @@
           - xfsprogs
           - parted
         state: present
-      when: ansible_distribution == "AlmaLinux"
+      when: ansible_facts['distribution'] == "AlmaLinux"
     
-    # 2. Crear particiones
+    # 2. Verificar que /dev/sdb existe
+    - name: Verificar existencia de /dev/sdb
+      stat:
+        path: /dev/sdb
+      register: sdb_exists
+    
+    - name: Salir si no hay /dev/sdb
+      fail:
+        msg: |
+          ERROR: /dev/sdb no existe en la VM.
+          
+          Para crear discos virtuales en esta VM:
+          1. Desde el hypervisor (VirtualBox/KVM), añade un disco de 2GB
+          2. O ejecuta en la VM:
+             sudo lab-storage create --name sdb --size 2G
+             sudo lab-storage create --name sdc --size 2G
+          
+          Luego ejecuta este playbook de nuevo.
+      when: not sdb_exists.stat.exists
+    
+    # 3. Crear tabla de particiones GPT (CORREGIDO)
     - name: Crear tabla de particiones GPT en sdb
       parted:
         device: /dev/sdb
         label: gpt
         state: present
+      when: sdb_exists.stat.exists
     
-    - name: Crear primera partición en sdb
+    # 4. Crear particiones en sdb
+    - name: Crear primera partición en sdb (1GB)
       parted:
         device: /dev/sdb
         number: 1
-        part_start: 1MiB
-        part_end: 1024MiB
+        part_start: "1MiB"
+        part_end: "1025MiB"
         state: present
+        unit: MiB
+      when: sdb_exists.stat.exists
     
-    - name: Crear segunda partición en sdb
+    - name: Crear segunda partición en sdb (1GB)
       parted:
         device: /dev/sdb
         number: 2
-        part_start: 1024MiB
-        part_end: 2048MiB
+        part_start: "1025MiB"
+        part_end: "2048MiB"
         state: present
+        unit: MiB
+      when: sdb_exists.stat.exists
     
-    - name: Habilitar LVM en particiones sdb
+    - name: Habilitar flag LVM en particiones
       parted:
         device: /dev/sdb
         number: "{{ item }}"
         flags: [lvm]
       loop: [1, 2]
+      when: sdb_exists.stat.exists
     
-    # 3. Configurar LVM
-    - name: Crear volúmenes físicos
+    # 5. Configurar LVM (usando shell para mejor control)
+    - name: Crear Physical Volumes
       shell: |
+        # Limpiar si existe
+        pvremove -f /dev/sdb1 /dev/sdb2 2>/dev/null || true
+        # Crear nuevos
         pvcreate /dev/sdb1 /dev/sdb2 --yes
       args:
-        creates: /dev/{{ vg_name }}
+        creates: /dev/practice_vg
+      when: sdb_exists.stat.exists
     
-    - name: Crear grupo de volúmenes
+    - name: Crear Volume Group
       shell: |
+        # Eliminar si existe
+        vgremove -f {{ vg_name }} 2>/dev/null || true
+        # Crear nuevo
         vgcreate {{ vg_name }} /dev/sdb1 /dev/sdb2
       args:
         creates: /dev/{{ vg_name }}
+      when: sdb_exists.stat.exists
     
-    - name: Crear volumen lógico de 500MB
+    - name: Crear Logical Volume
       shell: |
-        lvcreate -n {{ lv_name }} -L 500M {{ vg_name }}
+        # Eliminar si existe
+        lvremove -f /dev/{{ vg_name }}/{{ lv_name }} 2>/dev/null || true
+        # Crear nuevo
+        lvcreate -n {{ lv_name }} -L {{ initial_size }} {{ vg_name }}
       args:
         creates: /dev/{{ vg_name }}/{{ lv_name }}
+      when: sdb_exists.stat.exists
     
-    # 4. Sistema de archivos
+    # 6. Sistema de archivos
     - name: Formatear con XFS
       filesystem:
         fstype: xfs
         dev: /dev/{{ vg_name }}/{{ lv_name }}
+        force: yes
+      when: sdb_exists.stat.exists
     
-    - name: Crear directorio de montaje
+    - name: Crear punto de montaje
       file:
         path: "{{ mount_point }}"
         state: directory
@@ -91,64 +136,44 @@
         src: /dev/{{ vg_name }}/{{ lv_name }}
         fstype: xfs
         state: mounted
+      when: sdb_exists.stat.exists
     
-    # 5. Datos de prueba
-    - name: Crear archivos de prueba
+    # 7. Crear datos de prueba
+    - name: Crear contenido de prueba
       shell: |
-        echo "Contenido inicial del sistema de archivos" > {{ mount_point }}/sample.txt
+        echo "Contenido inicial del sistema de archivos - RHCSA Practice" > {{ mount_point }}/sample.txt
         mkdir -p {{ mount_point }}/documents
-        touch {{ mount_point }}/documents/file{1..5}.txt
+        for i in {1..5}; do
+          echo "Documento $i - Espacio utilizado" > {{ mount_point }}/documents/file$i.txt
+        done
+        echo "Archivos creados en {{ mount_point }}:"
         ls -la {{ mount_point }}/
+      when: sdb_exists.stat.exists
     
-    # 6. Script de validación
-    - name: Crear script de validación
-      copy:
-        dest: /root/validate_lab.sh
-        mode: '0755'
-        content: |
-          #!/bin/bash
-          echo "=== VALIDACIÓN DEL LABORATORIO ==="
-          echo "1. Sistema de archivos montado:"
-          df -h {{ mount_point }} 2>/dev/null && echo "✅ OK" || echo "❌ FALLÓ"
-          echo ""
-          echo "2. Tamaño del LV:"
-          lvs {{ vg_name }}/{{ lv_name }} --units g --noheadings -o lv_size 2>/dev/null && echo "✅ OK" || echo "❌ FALLÓ"
-          echo ""
-          echo "3. Archivos de prueba:"
-          ls {{ mount_point }}/ 2>/dev/null && echo "✅ OK" || echo "❌ FALLÓ"
-          echo ""
-          echo "✅ CONFIGURACIÓN LISTA PARA EL EJERCICIO!"
-          echo ""
-          echo "=== TAREA ==="
-          echo "Expandir {{ lv_name }} a 1.2GB y redimensionar XFS"
-          echo ""
-          echo "Comandos iniciales:"
-          echo "  df -h {{ mount_point }}"
-          echo "  lvs {{ vg_name }}"
-          echo "  vgs {{ vg_name }}"
-    
-    # 7. Mostrar resumen
+    # 8. Mostrar resumen final
     - name: Mostrar configuración final
       shell: |
-        echo "========================================"
-        echo "  LABORATORIO CONFIGURADO EXITOSAMENTE"
-        echo "========================================"
-        echo "Host: $(hostname)"
-        echo "IP: $(hostname -I)"
+        echo "=========================================="
+        echo "  CONFIGURACIÓN COMPLETADA EXITOSAMENTE"
+        echo "=========================================="
+        echo "Hostname: $(hostname)"
+        echo "Usuario: student"
         echo ""
-        echo "Configuración:"
-        echo "  - VG: {{ vg_name }}"
-        echo "  - LV: {{ lv_name }} (500MB inicial)"
-        echo "  - Montaje: {{ mount_point }}"
-        echo "  - FS: XFS"
+        echo "✅ CONFIGURACIÓN LVM:"
+        sudo lvs {{ vg_name }} --units g
         echo ""
-        echo "Para comenzar el ejercicio:"
-        echo "  1. Conectar: ssh student@$(hostname -I | awk '{print $1}')"
-        echo "  2. Ver estado: sudo /root/validate_lab.sh"
-        echo "  3. Expandir LV a 1.2GB y redimensionar XFS"
+        echo "✅ ESPACIO EN FILESYSTEM:"
+        df -h {{ mount_point }}
         echo ""
-        echo "========================================"
-      register: summary
+        echo "✅ ARCHIVOS DE PRUEBA CREADOS EN: {{ mount_point }}"
+        ls {{ mount_point }}/
+        echo ""
+        echo "=========================================="
+        echo "🎯 TAREA: Expandir {{ lv_name }} a {{ target_size }}"
+        echo "=========================================="
+      register: final_summary
+      changed_when: false
     
-    - debug:
-        msg: "{{ summary.stdout_lines }}"
+    - name: Mostrar resumen
+      debug:
+        msg: "{{ final_summary.stdout_lines }}"
