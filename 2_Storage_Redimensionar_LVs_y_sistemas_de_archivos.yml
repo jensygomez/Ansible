@@ -1,6 +1,6 @@
 ---
 - name: RHCSA EX200 - Storage Lab (LV Resize - Basic)
-  hosts: localhost
+  hosts: rhcsa_vm
   become: true
   tasks:
 
