@@ -1,0 +1,154 @@
+---
+# /home/jensy/GitHub/Ansible/2_Storage_Redimensionar_LVs_y_sistemas_de_archivos.yml
+# 🚀 CONFIGURACIÓN COMPLETA EN UN SOLO ARCHIVO - RHCSA STORAGE LAB
+# Guardar como: setup-lab.yml
+# Ejecutar: ansible-playbook setup-lab.yml -i "192.168.122.206," -u student -k -K
+
+- name: Configurar laboratorio para ejercicio de LVM/XFS
+  hosts: all
+  gather_facts: yes
+  become: yes
+  vars:
+    vg_name: practice_vg
+    lv_name: data_lv
+    mount_point: /mnt/data
+  
+  tasks:
+    # 1. Instalar dependencias si faltan
+    - name: Instalar paquetes necesarios
+      dnf:
+        name:
+          - lvm2
+          - xfsprogs
+          - parted
+        state: present
+      when: ansible_distribution == "AlmaLinux"
+    
+    # 2. Crear particiones
+    - name: Crear tabla de particiones GPT en sdb
+      parted:
+        device: /dev/sdb
+        label: gpt
+        state: present
+    
+    - name: Crear primera partición en sdb
+      parted:
+        device: /dev/sdb
+        number: 1
+        part_start: 1MiB
+        part_end: 1024MiB
+        state: present
+    
+    - name: Crear segunda partición en sdb
+      parted:
+        device: /dev/sdb
+        number: 2
+        part_start: 1024MiB
+        part_end: 2048MiB
+        state: present
+    
+    - name: Habilitar LVM en particiones sdb
+      parted:
+        device: /dev/sdb
+        number: "{{ item }}"
+        flags: [lvm]
+      loop: [1, 2]
+    
+    # 3. Configurar LVM
+    - name: Crear volúmenes físicos
+      shell: |
+        pvcreate /dev/sdb1 /dev/sdb2 --yes
+      args:
+        creates: /dev/{{ vg_name }}
+    
+    - name: Crear grupo de volúmenes
+      shell: |
+        vgcreate {{ vg_name }} /dev/sdb1 /dev/sdb2
+      args:
+        creates: /dev/{{ vg_name }}
+    
+    - name: Crear volumen lógico de 500MB
+      shell: |
+        lvcreate -n {{ lv_name }} -L 500M {{ vg_name }}
+      args:
+        creates: /dev/{{ vg_name }}/{{ lv_name }}
+    
+    # 4. Sistema de archivos
+    - name: Formatear con XFS
+      filesystem:
+        fstype: xfs
+        dev: /dev/{{ vg_name }}/{{ lv_name }}
+    
+    - name: Crear directorio de montaje
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Montar sistema de archivos
+      mount:
+        path: "{{ mount_point }}"
+        src: /dev/{{ vg_name }}/{{ lv_name }}
+        fstype: xfs
+        state: mounted
+    
+    # 5. Datos de prueba
+    - name: Crear archivos de prueba
+      shell: |
+        echo "Contenido inicial del sistema de archivos" > {{ mount_point }}/sample.txt
+        mkdir -p {{ mount_point }}/documents
+        touch {{ mount_point }}/documents/file{1..5}.txt
+        ls -la {{ mount_point }}/
+    
+    # 6. Script de validación
+    - name: Crear script de validación
+      copy:
+        dest: /root/validate_lab.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          echo "=== VALIDACIÓN DEL LABORATORIO ==="
+          echo "1. Sistema de archivos montado:"
+          df -h {{ mount_point }} 2>/dev/null && echo "✅ OK" || echo "❌ FALLÓ"
+          echo ""
+          echo "2. Tamaño del LV:"
+          lvs {{ vg_name }}/{{ lv_name }} --units g --noheadings -o lv_size 2>/dev/null && echo "✅ OK" || echo "❌ FALLÓ"
+          echo ""
+          echo "3. Archivos de prueba:"
+          ls {{ mount_point }}/ 2>/dev/null && echo "✅ OK" || echo "❌ FALLÓ"
+          echo ""
+          echo "✅ CONFIGURACIÓN LISTA PARA EL EJERCICIO!"
+          echo ""
+          echo "=== TAREA ==="
+          echo "Expandir {{ lv_name }} a 1.2GB y redimensionar XFS"
+          echo ""
+          echo "Comandos iniciales:"
+          echo "  df -h {{ mount_point }}"
+          echo "  lvs {{ vg_name }}"
+          echo "  vgs {{ vg_name }}"
+    
+    # 7. Mostrar resumen
+    - name: Mostrar configuración final
+      shell: |
+        echo "========================================"
+        echo "  LABORATORIO CONFIGURADO EXITOSAMENTE"
+        echo "========================================"
+        echo "Host: $(hostname)"
+        echo "IP: $(hostname -I)"
+        echo ""
+        echo "Configuración:"
+        echo "  - VG: {{ vg_name }}"
+        echo "  - LV: {{ lv_name }} (500MB inicial)"
+        echo "  - Montaje: {{ mount_point }}"
+        echo "  - FS: XFS"
+        echo ""
+        echo "Para comenzar el ejercicio:"
+        echo "  1. Conectar: ssh student@$(hostname -I | awk '{print $1}')"
+        echo "  2. Ver estado: sudo /root/validate_lab.sh"
+        echo "  3. Expandir LV a 1.2GB y redimensionar XFS"
+        echo ""
+        echo "========================================"
+      register: summary
+    
+    - debug:
+        msg: "{{ summary.stdout_lines }}"
