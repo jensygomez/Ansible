@@ -1,39 +1,63 @@
+
 ---
-- name: RHCSA EX200 - Storage Lab (LV Resize - Basic)
-  hosts: rhcsa_vm
-  become: true
+- name: RHCSA EX200 - Storage Lab | Resize LVs and Filesystems (BASIC)
+  hosts: all
+  become: yes
+  gather_facts: no
+
   tasks:
 
-    - name: Crear VG rhcsa_vg usando /dev/sdb
+    - name: Ensure LVM tools are installed
+      dnf:
+        name:
+          - lvm2
+          - xfsprogs
+        state: present
+
+    - name: Create physical volume
+      command: pvcreate /dev/sdb
+      args:
+        creates: /dev/sdb1
+      ignore_errors: yes
+
+    - name: Create volume group
       lvg:
-        vg: rhcsa_vg
+        vg: vg_exam
         pvs: /dev/sdb
 
-    - name: Crear LV data_lv de 800M
+    - name: Create logical volume
       lvol:
-        vg: rhcsa_vg
-        lv: data_lv
-        size: 800M
+        vg: vg_exam
+        lv: lv_data
+        size: 500M
 
-    - name: Crear sistema de archivos XFS
+    - name: Create XFS filesystem
       filesystem:
         fstype: xfs
-        dev: /dev/rhcsa_vg/data_lv
+        dev: /dev/vg_exam/lv_data
 
-    - name: Crear punto de montaje /data
+    - name: Create mount point
       file:
         path: /data
         state: directory
         mode: '0755'
 
-    - name: Montar /data
+    - name: Mount filesystem
       mount:
         path: /data
-        src: /dev/rhcsa_vg/data_lv
+        src: /dev/vg_exam/lv_data
         fstype: xfs
         state: mounted
 
-    - name: Crear archivo de prueba
-      copy:
-        dest: /data/info.txt
-        content: "RHCSA storage lab initialized\n"
+    - name: Persist mount in fstab
+      mount:
+        path: /data
+        src: /dev/vg_exam/lv_data
+        fstype: xfs
+        opts: defaults
+        state: present
+
+    - name: Create sample data to consume space
+      command: dd if=/dev/zero of=/data/dummyfile bs=1M count=300
+      args:
+        creates: /data/dummyfile
