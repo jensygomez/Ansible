@@ -1,41 +1,39 @@
 ---
-# /home/jensy/GitHub/Ansible/2_Storage_Redimensionar_LVs_y_sistemas_de_archivos.yml
----
-- name: Configuración inicial para práctica de almacenamiento
+- name: RHCSA EX200 - Storage Lab (LV Resize - Basic)
   hosts: localhost
   become: true
   tasks:
-    - name: Crear PV en /dev/sdb
-      command: pvcreate /dev/sdb
-      args:
-        creates: /dev/sdb
 
-    - name: Crear PV en /dev/sdc
-      command: pvcreate /dev/sdc
-      args:
-        creates: /dev/sdc
+    - name: Crear VG rhcsa_vg usando /dev/sdb
+      lvg:
+        vg: rhcsa_vg
+        pvs: /dev/sdb
 
-    - name: Crear VG practicevg
-      command: vgcreate practicevg /dev/sdb /dev/sdc
-      args:
-        creates: /dev/mapper/practicevg*
+    - name: Crear LV data_lv de 800M
+      lvol:
+        vg: rhcsa_vg
+        lv: data_lv
+        size: 800M
 
-    - name: Crear LV datalv de 800M
-      command: lvcreate -L 800M -n datalv practicevg
-
-    - name: Formatear LV con XFS
+    - name: Crear sistema de archivos XFS
       filesystem:
         fstype: xfs
-        dev: /dev/practicevg/datalv
+        dev: /dev/rhcsa_vg/data_lv
 
-    - name: Crear punto de montaje
+    - name: Crear punto de montaje /data
       file:
-        path: /mnt/data
+        path: /data
         state: directory
+        mode: '0755'
 
-    - name: Montar LV
+    - name: Montar /data
       mount:
-        path: /mnt/data
-        src: /dev/practicevg/datalv
+        path: /data
+        src: /dev/rhcsa_vg/data_lv
         fstype: xfs
         state: mounted
+
+    - name: Crear archivo de prueba
+      copy:
+        dest: /data/info.txt
+        content: "RHCSA storage lab initialized\n"
