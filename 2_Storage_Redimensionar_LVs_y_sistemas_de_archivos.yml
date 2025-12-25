@@ -1,179 +1,41 @@
 ---
 # /home/jensy/GitHub/Ansible/2_Storage_Redimensionar_LVs_y_sistemas_de_archivos.yml
 ---
-# Playbook para ejercicio RHCSA - Redimensionar LVs y sistemas de archivos
-# Versión corregida - Funcional
-
-- name: Configurar laboratorio para práctica de LVM/XFS
-  hosts: all
-  gather_facts: yes
-  become: yes
-  become_user: root
-  
-  vars:
-    vg_name: practice_vg
-    lv_name: data_lv
-    mount_point: /mnt/data
-    initial_size: "500M"
-    target_size: "1.2G"
-  
+- name: Configuración inicial para práctica de almacenamiento
+  hosts: localhost
+  become: true
   tasks:
-    # 1. Instalar paquetes necesarios (modo silencioso)
-    - name: Instalar paquetes necesarios
-      dnf:
-        name:
-          - lvm2
-          - xfsprogs
-          - parted
-        state: present
-      when: ansible_facts['distribution'] == "AlmaLinux"
-    
-    # 2. Verificar que /dev/sdb existe
-    - name: Verificar existencia de /dev/sdb
-      stat:
-        path: /dev/sdb
-      register: sdb_exists
-    
-    - name: Salir si no hay /dev/sdb
-      fail:
-        msg: |
-          ERROR: /dev/sdb no existe en la VM.
-          
-          Para crear discos virtuales en esta VM:
-          1. Desde el hypervisor (VirtualBox/KVM), añade un disco de 2GB
-          2. O ejecuta en la VM:
-             sudo lab-storage create --name sdb --size 2G
-             sudo lab-storage create --name sdc --size 2G
-          
-          Luego ejecuta este playbook de nuevo.
-      when: not sdb_exists.stat.exists
-    
-    # 3. Crear tabla de particiones GPT (CORREGIDO)
-    - name: Crear tabla de particiones GPT en sdb
-      parted:
-        device: /dev/sdb
-        label: gpt
-        state: present
-      when: sdb_exists.stat.exists
-    
-    # 4. Crear particiones en sdb
-    - name: Crear primera partición en sdb (1GB)
-      parted:
-        device: /dev/sdb
-        number: 1
-        part_start: "1MiB"
-        part_end: "1025MiB"
-        state: present
-        unit: MiB
-      when: sdb_exists.stat.exists
-    
-    - name: Crear segunda partición en sdb (1GB)
-      parted:
-        device: /dev/sdb
-        number: 2
-        part_start: "1025MiB"
-        part_end: "2048MiB"
-        state: present
-        unit: MiB
-      when: sdb_exists.stat.exists
-    
-    - name: Habilitar flag LVM en particiones
-      parted:
-        device: /dev/sdb
-        number: "{{ item }}"
-        flags: [lvm]
-      loop: [1, 2]
-      when: sdb_exists.stat.exists
-    
-    # 5. Configurar LVM (usando shell para mejor control)
-    - name: Crear Physical Volumes
-      shell: |
-        # Limpiar si existe
-        pvremove -f /dev/sdb1 /dev/sdb2 2>/dev/null || true
-        # Crear nuevos
-        pvcreate /dev/sdb1 /dev/sdb2 --yes
+    - name: Crear PV en /dev/sdb
+      command: pvcreate /dev/sdb
       args:
-        creates: /dev/practice_vg
-      when: sdb_exists.stat.exists
-    
-    - name: Crear Volume Group
-      shell: |
-        # Eliminar si existe
-        vgremove -f {{ vg_name }} 2>/dev/null || true
-        # Crear nuevo
-        vgcreate {{ vg_name }} /dev/sdb1 /dev/sdb2
+        creates: /dev/sdb
+
+    - name: Crear PV en /dev/sdc
+      command: pvcreate /dev/sdc
       args:
-        creates: /dev/{{ vg_name }}
-      when: sdb_exists.stat.exists
-    
-    - name: Crear Logical Volume
-      shell: |
-        # Eliminar si existe
-        lvremove -f /dev/{{ vg_name }}/{{ lv_name }} 2>/dev/null || true
-        # Crear nuevo
-        lvcreate -n {{ lv_name }} -L {{ initial_size }} {{ vg_name }}
+        creates: /dev/sdc
+
+    - name: Crear VG practicevg
+      command: vgcreate practicevg /dev/sdb /dev/sdc
       args:
-        creates: /dev/{{ vg_name }}/{{ lv_name }}
-      when: sdb_exists.stat.exists
-    
-    # 6. Sistema de archivos
-    - name: Formatear con XFS
+        creates: /dev/mapper/practicevg*
+
+    - name: Crear LV datalv de 800M
+      command: lvcreate -L 800M -n datalv practicevg
+
+    - name: Formatear LV con XFS
       filesystem:
         fstype: xfs
-        dev: /dev/{{ vg_name }}/{{ lv_name }}
-        force: yes
-      when: sdb_exists.stat.exists
-    
+        dev: /dev/practicevg/datalv
+
     - name: Crear punto de montaje
       file:
-        path: "{{ mount_point }}"
+        path: /mnt/data
         state: directory
-        mode: '0755'
-    
-    - name: Montar sistema de archivos
+
+    - name: Montar LV
       mount:
-        path: "{{ mount_point }}"
-        src: /dev/{{ vg_name }}/{{ lv_name }}
+        path: /mnt/data
+        src: /dev/practicevg/datalv
         fstype: xfs
         state: mounted
-      when: sdb_exists.stat.exists
-    
-    # 7. Crear datos de prueba
-    - name: Crear contenido de prueba
-      shell: |
-        echo "Contenido inicial del sistema de archivos - RHCSA Practice" > {{ mount_point }}/sample.txt
-        mkdir -p {{ mount_point }}/documents
-        for i in {1..5}; do
-          echo "Documento $i - Espacio utilizado" > {{ mount_point }}/documents/file$i.txt
-        done
-        echo "Archivos creados en {{ mount_point }}:"
-        ls -la {{ mount_point }}/
-      when: sdb_exists.stat.exists
-    
-    # 8. Mostrar resumen final
-    - name: Mostrar configuración final
-      shell: |
-        echo "=========================================="
-        echo "  CONFIGURACIÓN COMPLETADA EXITOSAMENTE"
-        echo "=========================================="
-        echo "Hostname: $(hostname)"
-        echo "Usuario: student"
-        echo ""
-        echo "✅ CONFIGURACIÓN LVM:"
-        sudo lvs {{ vg_name }} --units g
-        echo ""
-        echo "✅ ESPACIO EN FILESYSTEM:"
-        df -h {{ mount_point }}
-        echo ""
-        echo "✅ ARCHIVOS DE PRUEBA CREADOS EN: {{ mount_point }}"
-        ls {{ mount_point }}/
-        echo ""
-        echo "=========================================="
-        echo "🎯 TAREA: Expandir {{ lv_name }} a {{ target_size }}"
-        echo "=========================================="
-      register: final_summary
-      changed_when: false
-    
-    - name: Mostrar resumen
-      debug:
-        msg: "{{ final_summary.stdout_lines }}"
