@@ -1,0 +1,40 @@
+---
+- name: RHCSA EX200 - Storage Mounting Lab (Troubleshooting Basico)
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Crear partición primaria en /dev/sdb
+      community.general.parted:
+        device: /dev/sdb
+        number: 1
+        state: present
+        part_type: primary
+        fs_type: ext4
+        part_start: 1MiB
+        part_end: 100%
+
+    - name: Crear sistema de archivos ext4
+      filesystem:
+        fstype: ext4
+        dev: /dev/sdb1
+
+    - name: Crear punto de montaje
+      file:
+        path: /mnt/data
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Obtener UUID del dispositivo
+      command: blkid -s UUID -o value /dev/sdb1
+      register: sdb_uuid
+
+    - name: Agregar entrada en /etc/fstab
+      lineinfile:
+        path: /etc/fstab
+        line: "UUID={{ sdb_uuid.stdout }} /mnt/data ext4 defaults 0 0"
+        state: present
