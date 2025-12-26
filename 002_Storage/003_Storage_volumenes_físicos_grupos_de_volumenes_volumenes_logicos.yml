@@ -1,0 +1,54 @@
+
+
+
+---
+- name: RHCSA EX200 - LVM Troubleshooting Basic
+  hosts: all
+  become: true
+  vars:
+    vg_name: vg_data
+    lv_name: lv_app
+    mount_point: /mnt/appdata
+
+  tasks:
+
+    - name: Ensure lvm2 is installed
+      package:
+        name: lvm2
+        state: present
+
+    - name: Create physical volumes
+      command: pvcreate /dev/sdb /dev/sdc
+      ignore_errors: yes
+
+    - name: Create volume group
+      command: vgcreate {{ vg_name }} /dev/sdb /dev/sdc
+      ignore_errors: yes
+
+    - name: Create logical volume
+      command: lvcreate -n {{ lv_name }} -L 2G {{ vg_name }}
+      ignore_errors: yes
+
+    - name: Create filesystem
+      command: mkfs.ext4 /dev/{{ vg_name }}/{{ lv_name }}
+      ignore_errors: yes
+
+    - name: Create mount point
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+
+    - name: Mount logical volume
+      mount:
+        path: "{{ mount_point }}"
+        src: "/dev/{{ vg_name }}/{{ lv_name }}"
+        fstype: ext4
+        state: mounted
+
+    - name: Persist mount in fstab
+      mount:
+        path: "{{ mount_point }}"
+        src: "/dev/{{ vg_name }}/{{ lv_name }}"
+        fstype: ext4
+        opts: defaults
+        state: present
