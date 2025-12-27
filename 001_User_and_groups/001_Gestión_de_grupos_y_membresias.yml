@@ -13,16 +13,15 @@
         - admins
         - auditors
 
-    - name: Create users
+    - name: Create users (no password set)
       user:
-        name: "{{ item.name }}"
-        password: "{{ 'redhat' | password_hash('sha512') }}"
+        name: "{{ item }}"
         shell: /bin/bash
         state: present
       loop:
-        - { name: alice }
-        - { name: bob }
-        - { name: carol }
+        - alice
+        - bob
+        - carol
 
     - name: Add users to groups (intentional misconfiguration)
       command: usermod -G developers bob
