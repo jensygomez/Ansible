@@ -1,0 +1,40 @@
+---
+- name: RHCSA EX200 - User and Group Troubleshooting (BASIC)
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Create groups
+      group:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - developers
+        - admins
+        - auditors
+
+    - name: Create users
+      user:
+        name: "{{ item.name }}"
+        password: "{{ 'redhat' | password_hash('sha512') }}"
+        shell: /bin/bash
+        state: present
+      loop:
+        - { name: alice }
+        - { name: bob }
+        - { name: carol }
+
+    - name: Add users to groups (intentional misconfiguration)
+      command: usermod -G developers bob
+
+    - name: Add carol to admins group only
+      user:
+        name: carol
+        groups: admins
+        append: no
+
+    - name: Lock alice account unintentionally
+      command: usermod -L alice
+
+    - name: Change primary group of bob incorrectly
+      command: usermod -g auditors bob
